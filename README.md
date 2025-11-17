@@ -37,7 +37,7 @@ This is a learning project to explore:
   - VBIOS extraction and management
   - Comprehensive verification checks
 
-### System Changes
+#### System Changes
 
 The `igpu-passthrough` role modifies the following files on Proxmox hosts:
 
@@ -85,9 +85,26 @@ blacklist snd_hda_intel
 #### ROM Files
 
 **`/usr/share/kvm/vbios_1002_1586.bin`** - Extracted from GPU VFCT ACPI table
-**`/usr/share/kvm/AMDGopDriver.rom`** - AMD GOP driver (92KB)
+**`/usr/share/kvm/AMDGopDriver.rom`** - AMD GOP driver (92KB) from [Strix Halo Wiki](https://strixhalo.wiki/Guides/VM-iGPU-Passthrough) part of this codebase.
 
-**Note:** After applying changes, a system reboot is required.
+Once applied, a system reboot is required for changes to take effect.
+
+You can verify that it worked by checking that the iGPU is bound to the `vfio-pci` driver:
+
+```bash
+lspci -nnk -d 1002:1586
+```
+
+And you should see something likee this:
+
+```shell
+c3:00.0 Display controller [0380]: Advanced Micro Devices, Inc. [AMD/ATI] Strix Halo [Radeon Graphics / Radeon 8050S Graphics / Radeon 8060S Graphics] [1002:1586] (rev c1)
+        Subsystem: Framework Computer Inc. Device [f111:000a]
+        Kernel driver in use: vfio-pci
+        Kernel modules: amdgpu
+```
+
+Please note that once made this changes the video output will no longer be available on the host system, as the iGPU will be passed through to VMs, you will have video output till bootloader only.
 
 ## Resources
 
