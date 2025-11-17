@@ -1,0 +1,13 @@
+---
+# Main entry point for igpu-passthrough role
+- name: Import setup tasks
+  ansible.builtin.import_tasks: setup.yml
+  tags:
+    - setup
+    - configure
+
+- name: Import verification tasks
+  ansible.builtin.import_tasks: verify.yml
+  tags:
+    - verify
+    - check

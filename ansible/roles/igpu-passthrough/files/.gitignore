@@ -1,0 +1,5 @@
+# Keep all files including ROM binaries for offline/reliable deployments
+# We want to maintain these files in git to avoid external dependencies
+
+# Keep source files
+!vbios-extract.c

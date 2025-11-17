@@ -1,0 +1,209 @@
+---
+# Setup tasks for iGPU passthrough configuration
+- name: Detect bootloader type
+  ansible.builtin.shell:
+    cmd: proxmox-boot-tool status 2>/dev/null | grep -q 'grub' && echo 'grub' || echo 'systemd-boot'
+  register: bootloader_type
+  changed_when: false
+  failed_when: false
+
+- name: Display detected bootloader
+  ansible.builtin.debug:
+    msg: "Detected bootloader: {{ bootloader_type.stdout | trim }}"
+
+- name: Configure kernel parameters for GRUB
+  ansible.builtin.lineinfile:
+    path: /etc/default/grub
+    regexp: "^GRUB_CMDLINE_LINUX_DEFAULT="
+    line: 'GRUB_CMDLINE_LINUX_DEFAULT="{{ grub_cmdline }}"'
+    backup: true
+  when: "'grub' in bootloader_type.stdout"
+  notify: Update boot configuration
+
+- name: Configure kernel parameters for systemd-boot
+  ansible.builtin.lineinfile:
+    path: /etc/kernel/cmdline
+    regexp: "^root="
+    line: "{{ systemd_boot_cmdline }}"
+    create: true
+    backup: true
+  when: "'systemd-boot' in bootloader_type.stdout"
+  notify: Update boot configuration
+
+- name: Create /etc/modules-load.d/vfio.conf
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/vfio.conf
+    content: |
+      {% for module in vfio_modules %}
+      {{ module }}
+      {% endfor %}
+    mode: "0644"
+  notify: Update initramfs
+
+- name: Check if VBIOS extraction tool exists
+  ansible.builtin.stat:
+    path: /tmp/vbios-extract
+  register: vbios_tool
+
+- name: Copy VBIOS extraction tool source
+  ansible.builtin.copy:
+    src: vbios-extract.c
+    dest: /tmp/vbios-extract.c
+    mode: "0644"
+  when: not vbios_tool.stat.exists
+
+- name: Compile VBIOS extraction tool
+  ansible.builtin.command:
+    cmd: gcc -O2 -Wall -Wextra /tmp/vbios-extract.c -o /tmp/vbios-extract
+    creates: /tmp/vbios-extract
+  when: not vbios_tool.stat.exists
+
+- name: Check if VBIOS already extracted
+  ansible.builtin.stat:
+    path: "/usr/share/kvm/{{ vbios_filename }}"
+  register: vbios_file
+
+- name: Extract VBIOS (uses VFCT ACPI table method)
+  ansible.builtin.command:
+    cmd: /tmp/vbios-extract
+    chdir: /tmp
+  when: not vbios_file.stat.exists
+  register: vbios_extraction
+
+- name: Move VBIOS file to /usr/share/kvm/
+  ansible.builtin.command:
+    cmd: "mv /tmp/{{ vbios_filename }} /usr/share/kvm/{{ vbios_filename }}"
+  when:
+    - not vbios_file.stat.exists
+    - vbios_extraction is defined
+  ignore_errors: true
+
+- name: Verify extracted VBIOS checksum
+  ansible.builtin.stat:
+    path: "/usr/share/kvm/{{ vbios_filename }}"
+    checksum_algorithm: sha256
+  register: vbios_stat
+  when: vbios_file.stat.exists or (vbios_extraction is defined and not vbios_extraction.failed | default(false))
+
+- name: Display VBIOS verification info
+  ansible.builtin.debug:
+    msg:
+      - "VBIOS file: {{ vbios_filename }}"
+      - "Size: {{ vbios_stat.stat.size | default('N/A') }} bytes (expected: {{ rom_checksums[vbios_filename].size }})"
+      - "SHA256: {{ vbios_stat.stat.checksum | default('N/A') }}"
+      - "Expected SHA256: {{ rom_checksums[vbios_filename].sha256 }}"
+      - "Match: {{ (vbios_stat.stat.checksum | default('')) == rom_checksums[vbios_filename].sha256 }}"
+  when: vbios_stat.stat is defined
+
+- name: Check if AMDGopDriver.rom exists in role files
+  ansible.builtin.stat:
+    path: "{{ role_path }}/files/{{ amdgop_rom }}"
+  delegate_to: localhost
+  become: false
+  register: local_amdgop_file
+
+- name: Download AMDGopDriver.rom if missing (fallback)
+  ansible.builtin.get_url:
+    url: https://strixhalo.wiki/Guides/VM-iGPU-Passthrough/AMDGopDriver.rom
+    dest: "{{ role_path }}/files/{{ amdgop_rom }}"
+    mode: "0644"
+    timeout: 30
+  delegate_to: localhost
+  become: false
+  when: not local_amdgop_file.stat.exists
+  register: amdgop_download
+  failed_when: false
+
+- name: Display download result
+  ansible.builtin.debug:
+    msg: "Downloaded AMDGopDriver.rom from external source (fallback)"
+  when:
+    - amdgop_download is defined
+    - amdgop_download is changed
+
+- name: Fail if AMDGopDriver.rom still missing after download attempt
+  ansible.builtin.fail:
+    msg: |
+      AMDGopDriver.rom could not be downloaded from external source.
+      Please manually place the file at: {{ role_path }}/files/{{ amdgop_rom }}
+      You can download it from: https://strixhalo.wiki/Guides/VM-iGPU-Passthrough/AMDGopDriver.rom
+  when:
+    - not local_amdgop_file.stat.exists
+    - amdgop_download is defined
+    - amdgop_download is failed
+
+- name: Re-check AMDGopDriver.rom after potential download
+  ansible.builtin.stat:
+    path: "{{ role_path }}/files/{{ amdgop_rom }}"
+  delegate_to: localhost
+  become: false
+  register: local_amdgop_file
+  when:
+    - amdgop_download is defined
+    - amdgop_download is changed
+
+- name: Verify local AMDGopDriver.rom checksum
+  ansible.builtin.stat:
+    path: "{{ role_path }}/files/{{ amdgop_rom }}"
+    checksum_algorithm: sha256
+  delegate_to: localhost
+  become: false
+  register: local_amdgop_stat
+  when:
+    - local_amdgop_file is defined
+    - local_amdgop_file.stat is defined
+    - local_amdgop_file.stat.exists
+
+- name: Warning if AMDGopDriver.rom checksum doesn't match
+  ansible.builtin.debug:
+    msg:
+      - "WARNING: AMDGopDriver.rom checksum mismatch!"
+      - "Expected SHA256: {{ rom_checksums[amdgop_rom].sha256 }}"
+      - "Actual SHA256: {{ local_amdgop_stat.stat.checksum }}"
+      - "Expected size: {{ rom_checksums[amdgop_rom].size }} bytes"
+      - "Actual size: {{ local_amdgop_stat.stat.size }} bytes"
+  when:
+    - local_amdgop_stat.stat is defined
+    - (local_amdgop_stat.stat.checksum != rom_checksums[amdgop_rom].sha256) or
+      (local_amdgop_stat.stat.size != rom_checksums[amdgop_rom].size)
+
+- name: Copy AMDGopDriver.rom to /usr/share/kvm/
+  ansible.builtin.copy:
+    src: "{{ amdgop_rom }}"
+    dest: "/usr/share/kvm/{{ amdgop_rom }}"
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Create /etc/modprobe.d/blacklist-gpu.conf
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/blacklist-gpu.conf
+    content: |
+      # Blacklist GPU drivers to ensure vfio-pci has exclusive control
+      {% for driver in blacklisted_drivers %}
+      blacklist {{ driver }}
+      {% endfor %}
+    mode: "0644"
+  notify: Update initramfs
+
+- name: Create /etc/modprobe.d/vfio.conf
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/vfio.conf
+    content: |
+      options vfio-pci ids={{ gpu_pci_ids }} disable_vga=1
+      softdep amdgpu pre: vfio-pci
+      softdep snd_hda_intel pre: vfio-pci
+    mode: "0644"
+  notify: Update initramfs
+
+- name: Verify IOMMU is enabled in kernel
+  ansible.builtin.command:
+    cmd: dmesg | grep -i iommu
+  register: iommu_status
+  changed_when: false
+  failed_when: false
+
+- name: Display IOMMU status
+  ansible.builtin.debug:
+    msg: "{{ iommu_status.stdout_lines }}"
+  when: iommu_status.stdout_lines is defined

@@ -1,0 +1,14 @@
+---
+- name: Update boot configuration
+  ansible.builtin.command:
+    cmd: proxmox-boot-tool refresh
+  notify: Update initramfs
+
+- name: Update initramfs
+  ansible.builtin.command:
+    cmd: update-initramfs -u -k all
+  notify: Reboot required
+
+- name: Reboot required
+  ansible.builtin.debug:
+    msg: "System reboot required for changes to take effect. Please reboot the system manually or run with --tags reboot."

@@ -1,0 +1,37 @@
+---
+# GPU PCI IDs for passthrough
+gpu_pci_ids: "1002:1586,1002:1640"
+
+# ROM file names
+vbios_filename: "vbios_1002_1586.bin"
+amdgop_rom: "AMDGopDriver.rom"
+
+# ROM file checksums for verification
+rom_checksums:
+  vbios_1002_1586.bin:
+    md5: "8f2d1e6c0a333d39117849bbfccbb1d7"
+    sha256: "35ea302fd1cf5e1f7fbbc34c37e43cccc6e5ffab8fa1f335f4d10ad1d577627d"
+    size: 17408
+  AMDGopDriver.rom:
+    md5: "4c0fee922ddf6afbe4ff6d50c9af211b"
+    sha256: "1c2b9dc8bd931b98e0a0097b3169bff8e00636eb6c144a86be9873ebfd6e3331"
+    size: 92672
+
+# Kernel parameters for GRUB
+grub_cmdline: "quiet amd_iommu=on iommu=pt video=efifb:off initcall_blacklist=sysfb_init"
+
+# Kernel parameters for systemd-boot
+systemd_boot_cmdline: "root=ZFS=rpool/ROOT/pve-1 boot=zfs quiet amd_iommu=on iommu=pt video=efifb:off initcall_blacklist=sysfb_init"
+
+# VFIO modules to load
+vfio_modules:
+  - vfio
+  - vfio_iommu_type1
+  - vfio_pci
+  - vfio_virqfd
+
+# GPU drivers to blacklist
+blacklisted_drivers:
+  - amdgpu
+  - radeon
+  - snd_hda_intel

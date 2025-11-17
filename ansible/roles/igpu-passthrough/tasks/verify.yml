@@ -1,0 +1,206 @@
+---
+# Verification tasks for iGPU passthrough configuration
+- name: Detect bootloader type
+  ansible.builtin.shell:
+    cmd: proxmox-boot-tool status 2>/dev/null | grep -q 'grub' && echo 'grub' || echo 'systemd-boot'
+  register: bootloader_type
+  changed_when: false
+  failed_when: false
+
+- name: Check GRUB configuration
+  ansible.builtin.shell:
+    cmd: grep '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub
+  register: grub_config
+  changed_when: false
+  failed_when: false
+  when: "'grub' in bootloader_type.stdout"
+
+- name: Check systemd-boot configuration
+  ansible.builtin.shell:
+    cmd: cat /etc/kernel/cmdline
+  register: systemd_boot_config
+  changed_when: false
+  failed_when: false
+  when: "'systemd-boot' in bootloader_type.stdout"
+
+- name: Check IOMMU is enabled in kernel
+  ansible.builtin.shell:
+    cmd: dmesg | grep -i "AMD-Vi" | head -5
+  register: iommu_check
+  changed_when: false
+  failed_when: false
+
+- name: Verify IOMMU groups exist
+  ansible.builtin.shell:
+    cmd: find /sys/kernel/iommu_groups/ -type l | wc -l
+  register: iommu_groups_count
+  changed_when: false
+
+- name: Check GPU driver binding
+  ansible.builtin.shell:
+    cmd: lspci -nnk -d 1002:1586 | grep -E "Kernel driver in use|Kernel modules"
+  register: gpu_driver
+  changed_when: false
+  failed_when: false
+
+- name: Extract GPU driver in use
+  ansible.builtin.shell:
+    cmd: lspci -nnk -d 1002:1586 | grep "Kernel driver in use" | awk '{print $5}'
+  register: gpu_driver_name
+  changed_when: false
+  failed_when: false
+
+- name: Check audio device driver binding
+  ansible.builtin.shell:
+    cmd: lspci -nnk -d 1002:1640 | grep -E "Kernel driver in use|Kernel modules"
+  register: audio_driver
+  changed_when: false
+  failed_when: false
+
+- name: Extract audio driver in use
+  ansible.builtin.shell:
+    cmd: lspci -nnk -d 1002:1640 | grep "Kernel driver in use" | awk '{print $5}'
+  register: audio_driver_name
+  changed_when: false
+  failed_when: false
+
+- name: Check VFIO modules loaded
+  ansible.builtin.shell:
+    cmd: lsmod | grep vfio
+  register: vfio_modules
+  changed_when: false
+  failed_when: false
+
+- name: Check VFIO devices exist
+  ansible.builtin.shell:
+    cmd: ls -1 /dev/vfio/ | grep -E '^[0-9]+$' | wc -l
+  register: vfio_devices_count
+  changed_when: false
+  failed_when: false
+
+- name: List VFIO devices for display
+  ansible.builtin.shell:
+    cmd: ls -la /dev/vfio/
+  register: vfio_devices_list
+  changed_when: false
+  failed_when: false
+
+- name: Check VBIOS file exists
+  ansible.builtin.stat:
+    path: "/usr/share/kvm/{{ vbios_filename }}"
+  register: vbios_file_check
+
+- name: Check AMDGopDriver.rom exists
+  ansible.builtin.stat:
+    path: "/usr/share/kvm/{{ amdgop_rom }}"
+  register: amdgop_file_check
+
+- name: Check kernel cmdline parameters
+  ansible.builtin.shell:
+    cmd: cat /proc/cmdline
+  register: kernel_cmdline
+  changed_when: false
+
+- name: Check /etc/modprobe.d/vfio.conf content
+  ansible.builtin.shell:
+    cmd: cat /etc/modprobe.d/vfio.conf
+  register: vfio_conf_content
+  changed_when: false
+  failed_when: false
+
+- name: Check /etc/modprobe.d/blacklist-gpu.conf content
+  ansible.builtin.shell:
+    cmd: cat /etc/modprobe.d/blacklist-gpu.conf
+  register: blacklist_conf_content
+  changed_when: false
+  failed_when: false
+
+- name: Generate verification report
+  ansible.builtin.debug:
+    msg:
+      - "=================================="
+      - "GPU PASSTHROUGH VERIFICATION REPORT"
+      - "=================================="
+      - ""
+      - "0. BOOTLOADER:"
+      - "   Type: {{ bootloader_type.stdout | trim }}"
+      - "   {% if 'grub' in bootloader_type.stdout %}Config: {{ grub_config.stdout | default('N/A') }}{% endif %}"
+      - "   {% if 'systemd-boot' in bootloader_type.stdout %}Config: {{ systemd_boot_config.stdout | default('N/A') }}{% endif %}"
+      - ""
+      - "1. IOMMU STATUS:"
+      - "   {{ '✅ ENABLED' if (iommu_check.stdout | length > 0) else '❌ NOT FOUND' }}"
+      - "   IOMMU Groups: {{ iommu_groups_count.stdout | trim }}"
+      - "   {% if iommu_check.stdout %}{{ iommu_check.stdout_lines[0] }}{% endif %}"
+      - ""
+      - "2. GPU DRIVER BINDING (1002:1586):"
+      - "   Driver: {{ gpu_driver_name.stdout | trim | default('UNKNOWN') }}"
+      - "   {{ '✅ BOUND TO vfio-pci' if (gpu_driver_name.stdout | trim == 'vfio-pci') else '❌ EXPECTED vfio-pci, GOT: ' + (gpu_driver_name.stdout | trim | default('NONE')) }}"
+      - "   {{ gpu_driver.stdout_lines | join('\n   ') if gpu_driver.stdout else 'No output' }}"
+      - ""
+      - "3. AUDIO DEVICE BINDING (1002:1640):"
+      - "   Driver: {{ audio_driver_name.stdout | trim | default('UNKNOWN') }}"
+      - "   {{ '✅ BOUND TO vfio-pci' if (audio_driver_name.stdout | trim == 'vfio-pci') else '❌ EXPECTED vfio-pci, GOT: ' + (audio_driver_name.stdout | trim | default('NONE')) }}"
+      - "   {{ audio_driver.stdout_lines | join('\n   ') if audio_driver.stdout else 'No output' }}"
+      - ""
+      - "4. VFIO MODULES:"
+      - "   {{ '✅ LOADED' if (vfio_modules.stdout | length > 0) else '❌ NOT LOADED' }}"
+      - "   {{ vfio_modules.stdout_lines | join('\n   ') if vfio_modules.stdout else 'No modules found' }}"
+      - ""
+      - "5. VFIO DEVICES:"
+      - "   {{ '✅ FOUND (' + vfio_devices_count.stdout + ' devices)' if (vfio_devices_count.stdout | int > 0) else '❌ NO DEVICES' }}"
+      - "   {{ vfio_devices_list.stdout_lines | join('\n   ') if vfio_devices_list.stdout else 'No devices found' }}"
+      - ""
+      - "6. ROM FILES:"
+      - "   VBIOS: {{ '✅ EXISTS (' + (vbios_file_check.stat.size | string) + ' bytes)' if vbios_file_check.stat.exists else '❌ MISSING' }}"
+      - "   AMDGopDriver: {{ '✅ EXISTS (' + (amdgop_file_check.stat.size | string) + ' bytes)' if amdgop_file_check.stat.exists else '❌ MISSING' }}"
+      - ""
+      - "7. KERNEL PARAMETERS (Active in /proc/cmdline):"
+      - "   {{ '✅ amd_iommu=on' if ('amd_iommu=on' in kernel_cmdline.stdout) else '❌ amd_iommu=on MISSING' }}"
+      - "   {{ '✅ iommu=pt' if ('iommu=pt' in kernel_cmdline.stdout) else '❌ iommu=pt MISSING' }}"
+      - "   {{ '✅ video=efifb:off' if ('video=efifb:off' in kernel_cmdline.stdout) else '⚠️  video=efifb:off MISSING' }}"
+      - ""
+      - "8. MODPROBE CONFIGURATION FILES:"
+      - "   /etc/modprobe.d/vfio.conf:"
+      - "   {{ '  ✅ ids=' + gpu_pci_ids if ('ids=' + gpu_pci_ids in vfio_conf_content.stdout) else '  ❌ GPU PCI IDs MISSING' }}"
+      - "   {{ '  ✅ disable_vga=1' if ('disable_vga=1' in vfio_conf_content.stdout) else '  ❌ disable_vga=1 MISSING' }}"
+      - "   {{ '  ✅ softdep amdgpu pre: vfio-pci' if ('softdep amdgpu pre: vfio-pci' in vfio_conf_content.stdout) else '  ❌ softdep amdgpu MISSING' }}"
+      - "   {{ '  ✅ softdep snd_hda_intel pre: vfio-pci' if ('softdep snd_hda_intel pre: vfio-pci' in vfio_conf_content.stdout) else '  ❌ softdep snd_hda_intel MISSING' }}"
+      - ""
+      - "   /etc/modprobe.d/blacklist-gpu.conf:"
+      - "   {{ '  ✅ blacklist amdgpu' if ('blacklist amdgpu' in blacklist_conf_content.stdout) else '  ❌ blacklist amdgpu MISSING' }}"
+      - "   {{ '  ✅ blacklist radeon' if ('blacklist radeon' in blacklist_conf_content.stdout) else '  ❌ blacklist radeon MISSING' }}"
+      - "   {{ '  ✅ blacklist snd_hda_intel' if ('blacklist snd_hda_intel' in blacklist_conf_content.stdout) else '  ❌ blacklist snd_hda_intel MISSING' }}"
+      - ""
+      - "=================================="
+      - "OVERALL STATUS: {{ '✅ READY FOR GPU PASSTHROUGH' if (
+        (iommu_check.stdout | length > 0) and
+        (gpu_driver_name.stdout | trim == 'vfio-pci') and
+        (audio_driver_name.stdout | trim == 'vfio-pci') and
+        (vfio_modules.stdout | length > 0) and
+        (vfio_devices_count.stdout | int > 0) and
+        vbios_file_check.stat.exists and
+        amdgop_file_check.stat.exists and
+        ('disable_vga=1' in vfio_conf_content.stdout) and
+        ('blacklist amdgpu' in blacklist_conf_content.stdout)
+        ) else '❌ CONFIGURATION INCOMPLETE' }}"
+      - "=================================="
+
+- name: Set verification result fact
+  ansible.builtin.set_fact:
+    gpu_passthrough_ready: >-
+      {{
+        (iommu_check.stdout | length > 0) and
+        (gpu_driver_name.stdout | trim == 'vfio-pci') and
+        (audio_driver_name.stdout | trim == 'vfio-pci') and
+        (vfio_modules.stdout | length > 0) and
+        (vfio_devices_count.stdout | int > 0) and
+        vbios_file_check.stat.exists and
+        amdgop_file_check.stat.exists and
+        ('disable_vga=1' in vfio_conf_content.stdout) and
+        ('blacklist amdgpu' in blacklist_conf_content.stdout)
+      }}
+
+- name: Fail if configuration is incomplete
+  ansible.builtin.fail:
+    msg: "GPU passthrough configuration is incomplete. Review the report above."
+  when: not gpu_passthrough_ready
