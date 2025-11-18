@@ -1,5 +1,20 @@
 # Spark Bare Metal - Lab Experiments
 
+## Table of Contents
+
+- [⚠️ Disclaimer](#️-disclaimer)
+- [Purpose](#purpose)
+- [Project Context](#project-context)
+- [What's Included](#whats-included)
+  - [Ansible Roles](#ansible-roles)
+  - [System Changes](#system-changes)
+    - [Bootloader Configuration](#bootloader-configuration)
+    - [Module Configuration](#module-configuration)
+    - [ROM Files](#rom-files)
+- [Resources](#resources)
+- [Contributing](#contributing)
+- [License](#license)
+
 ## ⚠️ Disclaimer
 
 This repository contains **experimental configurations** and lab setups used for learning and testing purposes.
