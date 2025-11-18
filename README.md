@@ -45,7 +45,7 @@ This is a learning project to explore:
 
 ### Ansible Roles
 
-- **`igpu-passthrough`** - Configure AMD iGPU passthrough on Proxmox VE hosts
+- **[`igpu-passthrough`](ansible/roles/igpu-passthrough/)** - Configure AMD iGPU passthrough on Proxmox VE hosts
   - Bootloader configuration (GRUB/systemd-boot)
   - IOMMU and VFIO setup
   - GPU driver blacklisting
